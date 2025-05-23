@@ -9,7 +9,7 @@ on:
 jobs:
 
   build:
-    environment: DOCKERHUB_USERNAME
+    environment: DOCKERHUB_TOKEN
 
     runs-on: ubuntu-latest
 
