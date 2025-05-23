@@ -22,7 +22,13 @@ jobs:
 
       - name: Save version info
         run: |
-          git describe --tags > VERSION 
+          git fetch --tags
+          if git describe --tags 2>/dev/null; then
+            git describe --tags > VERSION
+          else
+            echo "latest" > VERSION
+            echo "警告: 未找到Git标签，使用默认版本"
+          fi
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v2
