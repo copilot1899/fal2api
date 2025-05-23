@@ -1,23 +1,24 @@
 import express from 'express';
 import { fal } from '@fal-ai/client';
-import dotenv from 'dotenv';
 import fetch from 'node-fetch';
+import dotenv from 'dotenv';
+import { logger } from './logger.js';
 
 // 加载环境变量
 dotenv.config({ path: '.env.node' });
 
-// 从环境变量读取 Fal AI API Key 和自定义 API Key
+// 获取环境变量
 const FAL_KEY = process.env.FAL_KEY;
-const API_KEY = process.env.API_KEY; // 添加自定义 API Key 环境变量
+const API_KEY = process.env.API_KEY;
 
+// 验证环境变量
 if (!FAL_KEY) {
-    console.error("Error: FAL_KEY environment variable is not set.");
+    logger.error('FAL_KEY environment variable is required');
     process.exit(1);
 }
 
 if (!API_KEY) {
-    console.error("Error: API_KEY environment variable is not set.");
-    process.exit(1);
+    logger.warn('API_KEY environment variable is not set. API authentication will be disabled.');
 }
 
 // 配置 fal 客户端
@@ -26,37 +27,98 @@ fal.config({
 });
 
 const app = express();
+const PORT = process.env.PORT || 3001;
+
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-const PORT = process.env.PORT || 3001;
-
-// API Key 鉴权中间件
-const apiKeyAuth = (req, res, next) => {
-    const authHeader = req.headers['authorization'];
-
-    if (!authHeader) {
-        console.warn('Unauthorized: No Authorization header provided');
-        return res.status(401).json({ error: 'Unauthorized: No API Key provided' });
-    }
-
-    const authParts = authHeader.split(' ');
-    if (authParts.length !== 2 || authParts[0].toLowerCase() !== 'bearer') {
-        console.warn('Unauthorized: Invalid Authorization header format');
-        return res.status(401).json({ error: 'Unauthorized: Invalid Authorization header format' });
-    }
-
-    const providedKey = authParts[1];
-    if (providedKey !== API_KEY) {
-        console.warn('Unauthorized: Invalid API Key');
-        return res.status(401).json({ error: 'Unauthorized: Invalid API Key' });
-    }
-
+// 添加请求日志中间件
+app.use((req, res, next) => {
+    const startTime = Date.now();
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '-';
+    const requestType = `${req.method} ${req.originalUrl}`;
+    
+    logger.info(`Incoming request`, {
+        requestType,
+        ip,
+        method: req.method,
+        url: req.originalUrl,
+        userAgent: req.headers['user-agent'] || '-'
+    });
+    
+    // 在响应完成后记录日志
+    res.on('finish', () => {
+        const duration = Date.now() - startTime;
+        const statusCode = res.statusCode;
+        
+        if (statusCode >= 400) {
+            logger.warn(`Request completed with error`, {
+                requestType,
+                ip,
+                method: req.method,
+                url: req.originalUrl,
+                statusCode,
+                duration
+            });
+        } else {
+            logger.info(`Request completed`, {
+                requestType,
+                ip,
+                method: req.method,
+                url: req.originalUrl,
+                statusCode,
+                duration
+            });
+        }
+    });
+    
     next();
-};
+});
 
-// 应用 API Key 鉴权中间件到所有 API 路由
-app.use(['/v1/models', '/v1/chat/completions', '/v1/images/generations'], apiKeyAuth);
+// API 密钥验证中间件
+app.use((req, res, next) => {
+    // 跳过 OPTIONS 请求（用于 CORS 预检）
+    if (req.method === 'OPTIONS') {
+        return next();
+    }
+    
+    const apiKey = req.headers['authorization'];
+    const expectedApiKey = `Bearer ${API_KEY}`;
+    
+    // 如果设置了 API_KEY 环境变量，则验证请求中的 API 密钥
+    if (API_KEY && apiKey !== expectedApiKey) {
+        const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '-';
+        logger.warn(`Unauthorized access attempt`, {
+            requestType: `${req.method} ${req.originalUrl}`,
+            ip,
+            providedKey: apiKey ? '(provided but invalid)' : '(not provided)'
+        });
+        
+        return res.status(401).json({
+            error: {
+                message: "Invalid API key. Please check your API key and try again.",
+                type: "invalid_request_error",
+                param: null,
+                code: "invalid_api_key"
+            }
+        });
+    }
+    
+    next();
+});
+
+// CORS 中间件
+app.use((req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(200);
+    }
+    
+    next();
+});
 
 // === 全局定义限制 ===
 const PROMPT_LIMIT = 4800;
@@ -137,15 +199,15 @@ const isChatModel = (model) => {
 
 // GET /v1/models endpoint
 app.get('/v1/models', (req, res) => {
-    console.log("Received request for GET /v1/models");
+    logger.log("Received request for GET /v1/models");
     try {
         const modelsData = [...FAL_SUPPORTED_MODELS, ...FAL_IMAGE_MODELS].map(modelId => ({
             id: modelId, object: "model", created: 1700000000, owned_by: getOwner(modelId)
         }));
         res.json({ object: "list", data: modelsData });
-        console.log("Successfully returned model list.");
+        logger.log("Successfully returned model list.");
     } catch (error) {
-        console.error("Error processing GET /v1/models:", error);
+        logger.error("Error processing GET /v1/models:", error);
         res.status(500).json({ error: "Failed to retrieve model list." });
     }
 });
@@ -154,7 +216,7 @@ app.get('/v1/models', (req, res) => {
 function convertMessagesToFalPrompt(messages) {
     let fixed_system_prompt_content = "";
     const conversation_message_blocks = [];
-    console.log(`Original messages count: ${messages.length}`);
+    logger.log(`Original messages count: ${messages.length}`);
 
     // 1. 分离 System 消息，格式化 User/Assistant 消息
     for (const message of messages) {
@@ -170,7 +232,7 @@ function convertMessagesToFalPrompt(messages) {
                 conversation_message_blocks.push(`Assistant: ${content}\n\n`);
                 break;
             default:
-                console.warn(`Unsupported role: ${message.role}`);
+                logger.warn(`Unsupported role: ${message.role}`);
                 continue;
         }
     }
@@ -179,7 +241,7 @@ function convertMessagesToFalPrompt(messages) {
     if (fixed_system_prompt_content.length > SYSTEM_PROMPT_LIMIT) {
         const originalLength = fixed_system_prompt_content.length;
         fixed_system_prompt_content = fixed_system_prompt_content.substring(0, SYSTEM_PROMPT_LIMIT);
-        console.warn(`Combined system messages truncated from ${originalLength} to ${SYSTEM_PROMPT_LIMIT}`);
+        logger.warn(`Combined system messages truncated from ${originalLength} to ${SYSTEM_PROMPT_LIMIT}`);
     }
     // 清理末尾可能多余的空白，以便后续判断和拼接
     fixed_system_prompt_content = fixed_system_prompt_content.trim();
@@ -195,7 +257,7 @@ function convertMessagesToFalPrompt(messages) {
          space_occupied_by_fixed_system = fixed_system_prompt_content.length + 4; // 预留 \n\n...\n\n 的长度
     }
      const remaining_system_limit = Math.max(0, SYSTEM_PROMPT_LIMIT - space_occupied_by_fixed_system);
-    console.log(`Trimmed fixed system prompt length: ${fixed_system_prompt_content.length}. Approx remaining system history limit: ${remaining_system_limit}`);
+    logger.log(`Trimmed fixed system prompt length: ${fixed_system_prompt_content.length}. Approx remaining system history limit: ${remaining_system_limit}`);
 
 
     // 4. 反向填充 User/Assistant 对话历史
@@ -206,13 +268,13 @@ function convertMessagesToFalPrompt(messages) {
     let promptFull = false;
     let systemHistoryFull = (remaining_system_limit <= 0);
 
-    console.log(`Processing ${conversation_message_blocks.length} user/assistant messages for recency filling.`);
+    logger.log(`Processing ${conversation_message_blocks.length} user/assistant messages for recency filling.`);
     for (let i = conversation_message_blocks.length - 1; i >= 0; i--) {
         const message_block = conversation_message_blocks[i];
         const block_length = message_block.length;
 
         if (promptFull && systemHistoryFull) {
-            console.log(`Both prompt and system history slots full. Omitting older messages from index ${i}.`);
+            logger.log(`Both prompt and system history slots full. Omitting older messages from index ${i}.`);
             break;
         }
 
@@ -224,7 +286,7 @@ function convertMessagesToFalPrompt(messages) {
                 continue;
             } else {
                 promptFull = true;
-                console.log(`Prompt limit (${PROMPT_LIMIT}) reached. Trying system history slot.`);
+                logger.log(`Prompt limit (${PROMPT_LIMIT}) reached. Trying system history slot.`);
             }
         }
 
@@ -236,7 +298,7 @@ function convertMessagesToFalPrompt(messages) {
                  continue;
             } else {
                  systemHistoryFull = true;
-                 console.log(`System history limit (${remaining_system_limit}) reached.`);
+                 logger.log(`System history limit (${remaining_system_limit}) reached.`);
             }
         }
     }
@@ -257,15 +319,15 @@ function convertMessagesToFalPrompt(messages) {
     if (hasFixedSystem && hasSystemHistory) {
         // 两部分都有，用分隔符连接
         final_system_prompt = fixed_system_prompt_content + SEPARATOR + system_prompt_history_content;
-        console.log("Combining fixed system prompt and history with separator.");
+        logger.log("Combining fixed system prompt and history with separator.");
     } else if (hasFixedSystem) {
         // 只有固定部分
         final_system_prompt = fixed_system_prompt_content;
-        console.log("Using only fixed system prompt.");
+        logger.log("Using only fixed system prompt.");
     } else if (hasSystemHistory) {
         // 只有历史部分 (固定部分为空)
         final_system_prompt = system_prompt_history_content;
-        console.log("Using only history in system prompt slot.");
+        logger.log("Using only history in system prompt slot.");
     }
     // 如果两部分都为空，final_system_prompt 保持空字符串 ""
 
@@ -275,8 +337,8 @@ function convertMessagesToFalPrompt(messages) {
         prompt: final_prompt              // final_prompt 在组合前已 trim
     };
 
-    console.log(`Final system_prompt length (Sys+Separator+Hist): ${result.system_prompt.length}`);
-    console.log(`Final prompt length (Hist): ${result.prompt.length}`);
+    logger.log(`Final system_prompt length (Sys+Separator+Hist): ${result.system_prompt.length}`);
+    logger.log(`Final prompt length (Hist): ${result.prompt.length}`);
 
     return result;
 }
@@ -285,13 +347,26 @@ function convertMessagesToFalPrompt(messages) {
 
 // POST /v1/chat/completions endpoint
 app.post('/v1/chat/completions', async (req, res) => {
+    const startTime = Date.now();
     const { model, messages, stream = false, reasoning = false, ...restOpenAIParams } = req.body;
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '-';
+    const requestType = 'POST /v1/chat/completions';
 
-    console.log(`Received chat completion request for model: ${model}, stream: ${stream}`);
+    logger.info(`Received chat completion request`, {
+        requestType,
+        ip,
+        model,
+        stream,
+        messageCount: messages?.length
+    });
 
     // 智能路由：如果是图像模型，自动重定向到图像生成端点
     if (isImageModel(model)) {
-        console.log(`Redirecting image model ${model} to image generation endpoint`);
+        logger.info(`Redirecting image model to image generation endpoint`, {
+            requestType,
+            ip,
+            model
+        });
         
         // 从消息中提取提示词
         let prompt = "";
@@ -304,6 +379,13 @@ app.post('/v1/chat/completions', async (req, res) => {
         }
         
         if (!prompt) {
+            const duration = Date.now() - startTime;
+            logger.warn("No valid prompt found in messages for image generation", {
+                requestType,
+                ip,
+                model,
+                duration
+            });
             return res.status(400).json({
                 error: {
                     message: "No valid prompt found in messages for image generation",
@@ -316,7 +398,23 @@ app.post('/v1/chat/completions', async (req, res) => {
         
         try {
             // 调用图像生成函数
+            logger.info(`Calling image generation function`, {
+                requestType,
+                ip,
+                model,
+                promptLength: prompt.length
+            });
+            
             const imageUrls = await generateImage(model, prompt, 1, "1024x1024", "url");
+            const duration = Date.now() - startTime;
+            
+            logger.info(`Successfully generated image`, {
+                requestType,
+                ip,
+                model,
+                duration,
+                imageCount: imageUrls.length
+            });
             
             // 构建响应
             if (stream) {
@@ -419,7 +517,15 @@ app.post('/v1/chat/completions', async (req, res) => {
             }
             return;
         } catch (error) {
-            console.error('Error generating image:', error);
+            const duration = Date.now() - startTime;
+            logger.error('Error generating image', {
+                requestType,
+                ip,
+                model,
+                duration,
+                error: error.message
+            });
+            
             return res.status(500).json({
                 error: {
                     message: error.message || "An error occurred during image generation",
@@ -433,7 +539,14 @@ app.post('/v1/chat/completions', async (req, res) => {
 
     // 验证模型是否为聊天模型
     if (!isChatModel(model)) {
-        console.error(`Error: Model '${model}' is not a supported chat model`);
+        const duration = Date.now() - startTime;
+        logger.error(`Model is not a supported chat model`, {
+            requestType,
+            ip,
+            model,
+            duration
+        });
+        
         return res.status(400).json({
             error: {
                 message: `Model '${model}' is not a supported chat model. Please use one of: ${FAL_SUPPORTED_MODELS.join(', ')}`,
@@ -445,10 +558,22 @@ app.post('/v1/chat/completions', async (req, res) => {
     }
 
     if (!FAL_SUPPORTED_MODELS.includes(model)) {
-         console.warn(`Warning: Requested model '${model}' is not in the explicitly supported list.`);
+        logger.warn(`Requested model is not in the explicitly supported list`, {
+            requestType,
+            ip,
+            model
+        });
     }
+    
     if (!model || !messages || !Array.isArray(messages) || messages.length === 0) {
-        console.error("Invalid request parameters:", { model, messages: Array.isArray(messages) ? messages.length : typeof messages });
+        const duration = Date.now() - startTime;
+        logger.error("Invalid request parameters", {
+            requestType,
+            ip,
+            model: model || 'undefined',
+            messagesType: Array.isArray(messages) ? `array[${messages.length}]` : typeof messages,
+            duration
+        });
         return res.status(400).json({ error: 'Missing or invalid parameters: model and messages array are required.' });
     }
 
@@ -462,20 +587,29 @@ app.post('/v1/chat/completions', async (req, res) => {
             ...(system_prompt && { system_prompt: system_prompt }),
             reasoning: !!reasoning,
         };
-	console.log("Fal Input:", JSON.stringify(falInput, null, 2));
-        console.log("Forwarding request to fal-ai with system-priority + separator + recency input:");
-        console.log("System Prompt Length:", system_prompt?.length || 0);
-        console.log("Prompt Length:", prompt?.length || 0);
+        
+        logger.debug("Fal Input prepared", {
+            requestType,
+            ip,
+            model,
+            systemPromptLength: system_prompt?.length || 0,
+            promptLength: prompt?.length || 0
+        });
+        
+        logger.log("Fal Input:", JSON.stringify(falInput, null, 2));
+        logger.log("Forwarding request to fal-ai with system-priority + separator + recency input:");
+        logger.log("System Prompt Length:", system_prompt?.length || 0);
+        logger.log("Prompt Length:", prompt?.length || 0);
         // 调试时取消注释可以查看具体内容
-        console.log("--- System Prompt Start ---");
-        console.log(system_prompt);
-        console.log("--- System Prompt End ---");
-        console.log("--- Prompt Start ---");
-        console.log(prompt);
-        console.log("--- Prompt End ---");
+        logger.log("--- System Prompt Start ---");
+        logger.log(system_prompt);
+        logger.log("--- System Prompt End ---");
+        logger.log("--- Prompt Start ---");
+        logger.log(prompt);
+        logger.log("--- Prompt End ---");
 
 
-        // --- 流式/非流式处理逻辑 (保持不变) ---
+        // --- 流式/非流式处理逻辑 ---
         if (stream) {
             // ... 流式代码 ...
             res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
@@ -486,16 +620,31 @@ app.post('/v1/chat/completions', async (req, res) => {
 
             let previousOutput = '';
 
+            logger.info(`Starting stream request to fal-ai`, {
+                requestType,
+                ip,
+                model,
+                elapsedTime: Date.now() - startTime
+            });
+
             const falStream = await fal.stream("fal-ai/any-llm", { input: falInput });
 
             try {
+                let chunkCount = 0;
                 for await (const event of falStream) {
+                    chunkCount++;
                     const currentOutput = (event && typeof event.output === 'string') ? event.output : '';
                     const isPartial = (event && typeof event.partial === 'boolean') ? event.partial : true;
                     const errorInfo = (event && event.error) ? event.error : null;
 
                     if (errorInfo) {
-                        console.error("Error received in fal stream event:", errorInfo);
+                        logger.error("Error received in fal stream event", {
+                            requestType,
+                            ip,
+                            model,
+                            errorInfo,
+                            elapsedTime: Date.now() - startTime
+                        });
                         const errorChunk = { id: `chatcmpl-${Date.now()}-error`, object: "chat.completion.chunk", created: Math.floor(Date.now() / 1000), model: model, choices: [{ index: 0, delta: {}, finish_reason: "error", message: { role: 'assistant', content: `Fal Stream Error: ${JSON.stringify(errorInfo)}` } }] };
                         res.write(`data: ${JSON.stringify(errorChunk)}\n\n`);
                         break;
@@ -505,7 +654,14 @@ app.post('/v1/chat/completions', async (req, res) => {
                     if (currentOutput.startsWith(previousOutput)) {
                         deltaContent = currentOutput.substring(previousOutput.length);
                     } else if (currentOutput.length > 0) {
-                        console.warn("Fal stream output mismatch detected. Sending full current output as delta.", { previousLength: previousOutput.length, currentLength: currentOutput.length });
+                        logger.warn("Fal stream output mismatch detected", {
+                            requestType,
+                            ip,
+                            model,
+                            previousLength: previousOutput.length,
+                            currentLength: currentOutput.length,
+                            elapsedTime: Date.now() - startTime
+                        });
                         deltaContent = currentOutput;
                         previousOutput = '';
                     }
@@ -514,33 +670,87 @@ app.post('/v1/chat/completions', async (req, res) => {
                     if (deltaContent || !isPartial) {
                         const openAIChunk = { id: `chatcmpl-${Date.now()}`, object: "chat.completion.chunk", created: Math.floor(Date.now() / 1000), model: model, choices: [{ index: 0, delta: { content: deltaContent }, finish_reason: isPartial === false ? "stop" : null }] };
                         res.write(`data: ${JSON.stringify(openAIChunk)}\n\n`);
+                        
+                        if (chunkCount % 10 === 0) {
+                            logger.debug(`Stream progress: ${chunkCount} chunks sent`, {
+                                requestType,
+                                ip,
+                                model,
+                                outputLength: previousOutput.length,
+                                elapsedTime: Date.now() - startTime
+                            });
+                        }
                     }
                 }
                 res.write(`data: [DONE]\n\n`);
                 res.end();
-                console.log("Stream finished.");
+                
+                const duration = Date.now() - startTime;
+                logger.info("Stream completed successfully", {
+                    requestType,
+                    ip,
+                    model,
+                    duration,
+                    chunkCount,
+                    outputLength: previousOutput.length
+                });
 
             } catch (streamError) {
-                console.error('Error during fal stream processing loop:', streamError);
+                const duration = Date.now() - startTime;
+                logger.error('Error during fal stream processing', {
+                    requestType,
+                    ip,
+                    model,
+                    duration,
+                    error: streamError instanceof Error ? streamError.message : JSON.stringify(streamError)
+                });
+                
                 try {
                     const errorDetails = (streamError instanceof Error) ? streamError.message : JSON.stringify(streamError);
                     res.write(`data: ${JSON.stringify({ error: { message: "Stream processing error", type: "proxy_error", details: errorDetails } })}\n\n`);
                     res.write(`data: [DONE]\n\n`);
                     res.end();
                 } catch (finalError) {
-                    console.error('Error sending stream error message to client:', finalError);
+                    logger.error('Error sending stream error message to client', {
+                        requestType,
+                        ip,
+                        model,
+                        duration,
+                        error: finalError instanceof Error ? finalError.message : JSON.stringify(finalError)
+                    });
                     if (!res.writableEnded) { res.end(); }
                 }
             }
         } else {
-            // --- 非流式处理 (保持不变) ---
-            console.log("Executing non-stream request...");
+            // --- 非流式处理 ---
+            logger.info("Executing non-stream request", {
+                requestType,
+                ip,
+                model,
+                elapsedTime: Date.now() - startTime
+            });
+            
             const result = await fal.subscribe("fal-ai/any-llm", { input: falInput, logs: true });
-            console.log("Received non-stream result from fal-ai:", JSON.stringify(result, null, 2));
+            const duration = Date.now() - startTime;
+            
+            logger.debug("Received non-stream result from fal-ai", {
+                requestType,
+                ip,
+                model,
+                duration,
+                outputLength: result?.output?.length || 0,
+                hasError: !!result?.error
+            });
 
             if (result && result.error) {
-                 console.error("Fal-ai returned an error in non-stream mode:", result.error);
-                 return res.status(500).json({ object: "error", message: `Fal-ai error: ${JSON.stringify(result.error)}`, type: "fal_ai_error", param: null, code: null });
+                logger.error("Fal-ai returned an error in non-stream mode", {
+                    requestType,
+                    ip,
+                    model,
+                    duration,
+                    error: JSON.stringify(result.error)
+                });
+                return res.status(500).json({ object: "error", message: `Fal-ai error: ${JSON.stringify(result.error)}`, type: "fal_ai_error", param: null, code: null });
             }
 
             const openAIResponse = {
@@ -550,24 +760,52 @@ app.post('/v1/chat/completions', async (req, res) => {
                 ...(result.reasoning && { fal_reasoning: result.reasoning }),
             };
             res.json(openAIResponse);
-            console.log("Returned non-stream response.");
+            
+            logger.info("Returned non-stream response successfully", {
+                requestType,
+                ip,
+                model,
+                duration,
+                outputLength: result?.output?.length || 0
+            });
         }
 
     } catch (error) {
-        console.error('Unhandled error in /v1/chat/completions:', error);
+        const duration = Date.now() - startTime;
+        logger.error('Unhandled error in /v1/chat/completions', {
+            requestType,
+            ip,
+            model,
+            duration,
+            error: error instanceof Error ? error.message : JSON.stringify(error)
+        });
+        
         if (!res.headersSent) {
             const errorMessage = (error instanceof Error) ? error.message : JSON.stringify(error);
             res.status(500).json({ error: 'Internal Server Error in Proxy', details: errorMessage });
         } else if (!res.writableEnded) {
-             console.error("Headers already sent, ending response.");
-             res.end();
+            logger.error("Headers already sent, ending response", {
+                requestType,
+                ip,
+                model,
+                duration
+            });
+            res.end();
         }
     }
 });
 
 // 图像生成函数
 async function generateImage(model, prompt, numImages = 1, size = "1024x1024", responseFormat = "url") {
-    console.log(`Generating image with model: ${model}, prompt: ${prompt}`);
+    const startTime = Date.now();
+    
+    logger.info(`Starting image generation`, {
+        requestType: 'generateImage',
+        model,
+        promptLength: prompt.length,
+        numImages,
+        size
+    });
     
     // 获取模型URL信息
     const modelUrls = IMAGE_MODEL_URLS[model] || IMAGE_MODEL_URLS["flux-dev"];
@@ -592,10 +830,20 @@ async function generateImage(model, prompt, numImages = 1, size = "1024x1024", r
         }
     }
     
-    console.log(`Request body: ${JSON.stringify(requestBody)}`);
+    logger.debug(`Request body prepared`, {
+        requestType: 'generateImage',
+        model,
+        requestBody: JSON.stringify(requestBody)
+    });
     
     try {
         // 发送初始请求
+        logger.info(`Sending request to ${submitUrl}`, {
+            requestType: 'generateImage',
+            model,
+            elapsedTime: Date.now() - startTime
+        });
+        
         const response = await fetch(submitUrl, {
             method: 'POST',
             headers: {
@@ -607,6 +855,13 @@ async function generateImage(model, prompt, numImages = 1, size = "1024x1024", r
         
         if (!response.ok) {
             const errorText = await response.text();
+            logger.error(`API request failed`, {
+                requestType: 'generateImage',
+                model,
+                statusCode: response.status,
+                error: errorText,
+                elapsedTime: Date.now() - startTime
+            });
             throw new Error(`API request failed with status ${response.status}: ${errorText}`);
         }
         
@@ -614,10 +869,21 @@ async function generateImage(model, prompt, numImages = 1, size = "1024x1024", r
         const requestId = responseData.request_id;
         
         if (!requestId) {
+            logger.error(`Missing request_id in API response`, {
+                requestType: 'generateImage',
+                model,
+                response: JSON.stringify(responseData),
+                elapsedTime: Date.now() - startTime
+            });
             throw new Error("Missing request_id in API response");
         }
         
-        console.log(`Got request_id: ${requestId}`);
+        logger.info(`Got request_id: ${requestId}`, {
+            requestType: 'generateImage',
+            model,
+            requestId,
+            elapsedTime: Date.now() - startTime
+        });
         
         // 轮询获取结果
         const statusUrl = `${statusBaseUrl}/requests/${requestId}/status`;
@@ -625,7 +891,13 @@ async function generateImage(model, prompt, numImages = 1, size = "1024x1024", r
         
         const maxAttempts = 60;
         for (let attempt = 0; attempt < maxAttempts; attempt++) {
-            console.log(`Polling attempt ${attempt + 1}/${maxAttempts}`);
+            logger.debug(`Polling attempt ${attempt + 1}/${maxAttempts}`, {
+                requestType: 'generateImage',
+                model,
+                requestId,
+                attempt: attempt + 1,
+                elapsedTime: Date.now() - startTime
+            });
             
             // 检查状态
             const statusResponse = await fetch(statusUrl, {
@@ -635,13 +907,30 @@ async function generateImage(model, prompt, numImages = 1, size = "1024x1024", r
             });
             
             if (!statusResponse.ok) {
-                throw new Error(`Error checking status: ${await statusResponse.text()}`);
+                const errorText = await statusResponse.text();
+                logger.error(`Error checking status`, {
+                    requestType: 'generateImage',
+                    model,
+                    requestId,
+                    statusCode: statusResponse.status,
+                    error: errorText,
+                    elapsedTime: Date.now() - startTime
+                });
+                throw new Error(`Error checking status: ${errorText}`);
             }
             
             const statusData = await statusResponse.json();
             const status = statusData.status;
             
             if (status === "COMPLETED") {
+                logger.info(`Generation completed, fetching results`, {
+                    requestType: 'generateImage',
+                    model,
+                    requestId,
+                    attempt: attempt + 1,
+                    elapsedTime: Date.now() - startTime
+                });
+                
                 // 获取结果
                 const resultResponse = await fetch(resultUrl, {
                     headers: {
@@ -650,7 +939,16 @@ async function generateImage(model, prompt, numImages = 1, size = "1024x1024", r
                 });
                 
                 if (!resultResponse.ok) {
-                    throw new Error(`Error fetching result: ${await resultResponse.text()}`);
+                    const errorText = await resultResponse.text();
+                    logger.error(`Error fetching result`, {
+                        requestType: 'generateImage',
+                        model,
+                        requestId,
+                        statusCode: resultResponse.status,
+                        error: errorText,
+                        elapsedTime: Date.now() - startTime
+                    });
+                    throw new Error(`Error fetching result: ${errorText}`);
                 }
                 
                 const resultData = await resultResponse.json();
@@ -661,12 +959,33 @@ async function generateImage(model, prompt, numImages = 1, size = "1024x1024", r
                         .filter(img => img && img.url)
                         .map(img => ({ url: img.url }));
                     
-                    console.log(`Generated ${imageUrls.length} images`);
+                    const duration = Date.now() - startTime;
+                    logger.info(`Successfully generated ${imageUrls.length} images`, {
+                        requestType: 'generateImage',
+                        model,
+                        requestId,
+                        imageCount: imageUrls.length,
+                        duration
+                    });
                     return imageUrls;
                 } else {
+                    logger.error(`No images found in the response`, {
+                        requestType: 'generateImage',
+                        model,
+                        requestId,
+                        response: JSON.stringify(resultData),
+                        elapsedTime: Date.now() - startTime
+                    });
                     throw new Error("No images found in the response");
                 }
             } else if (status === "FAILED") {
+                logger.error(`Request failed`, {
+                    requestType: 'generateImage',
+                    model,
+                    requestId,
+                    error: statusData.error || "Unknown error",
+                    elapsedTime: Date.now() - startTime
+                });
                 throw new Error(`Request failed: ${statusData.error || "Unknown error"}`);
             }
             
@@ -674,21 +993,51 @@ async function generateImage(model, prompt, numImages = 1, size = "1024x1024", r
             await new Promise(resolve => setTimeout(resolve, 1000));
         }
         
+        const duration = Date.now() - startTime;
+        logger.error(`Request timed out`, {
+            requestType: 'generateImage',
+            model,
+            requestId,
+            attempts: maxAttempts,
+            duration
+        });
         throw new Error("Request timed out after multiple polling attempts");
     } catch (error) {
-        console.error(`Error generating image: ${error.message}`);
+        const duration = Date.now() - startTime;
+        logger.error(`Error generating image`, {
+            requestType: 'generateImage',
+            model,
+            error: error.message,
+            duration
+        });
         throw error;
     }
 }
 
 // POST /v1/images/generations endpoint
 app.post('/v1/images/generations', async (req, res) => {
+    const startTime = Date.now();
     const { model = "flux-dev", prompt, n = 1, size = "1024x1024", responseFormat = "url", user = "" } = req.body;
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '-';
+    const requestType = 'POST /v1/images/generations';
 
-    console.log(`Received image generation request for model: ${model}, prompt: ${prompt}, n: ${n}, size: ${size}`);
+    logger.info(`Received image generation request`, {
+        requestType,
+        ip,
+        model,
+        promptLength: prompt?.length,
+        n,
+        size
+    });
 
     if (!prompt) {
-        console.error("Missing required parameter: prompt");
+        const duration = Date.now() - startTime;
+        logger.error(`Missing required parameter: prompt`, {
+            requestType,
+            ip,
+            model,
+            duration
+        });
         return res.status(400).json({
             error: {
                 message: "prompt is required",
@@ -701,7 +1050,13 @@ app.post('/v1/images/generations', async (req, res) => {
 
     // 验证模型是否为图像模型
     if (!isImageModel(model)) {
-        console.error(`Error: Model '${model}' is not a supported image model`);
+        const duration = Date.now() - startTime;
+        logger.error(`Model is not a supported image model`, {
+            requestType,
+            ip,
+            model,
+            duration
+        });
         return res.status(400).json({
             error: {
                 message: `Model '${model}' is not a supported image model. Please use one of: ${FAL_IMAGE_MODELS.join(', ')}`,
@@ -713,7 +1068,17 @@ app.post('/v1/images/generations', async (req, res) => {
     }
 
     try {
+        logger.info(`Calling image generation function`, {
+            requestType,
+            ip,
+            model,
+            n,
+            size,
+            elapsedTime: Date.now() - startTime
+        });
+        
         const imageUrls = await generateImage(model, prompt, n, size, responseFormat);
+        const duration = Date.now() - startTime;
         
         // 构建符合 OpenAI 格式的响应
         const response = {
@@ -722,10 +1087,24 @@ app.post('/v1/images/generations', async (req, res) => {
             model: model
         };
         
-        console.log(`Successfully generated ${imageUrls.length} images`);
+        logger.info(`Successfully generated images`, {
+            requestType,
+            ip,
+            model,
+            imageCount: imageUrls.length,
+            duration
+        });
+        
         res.json(response);
     } catch (error) {
-        console.error('Error generating image:', error);
+        const duration = Date.now() - startTime;
+        logger.error(`Error generating image`, {
+            requestType,
+            ip,
+            model,
+            error: error.message,
+            duration
+        });
         
         // 构建符合 OpenAI 格式的错误响应
         const errorResponse = {
@@ -741,21 +1120,23 @@ app.post('/v1/images/generations', async (req, res) => {
     }
 });
 
-// 启动服务器 (更新启动信息)
+// 启动服务器
 app.listen(PORT, () => {
-    console.log(`===================================================`);
-    console.log(` Fal OpenAI Proxy Server (System Top + Separator + Recency)`);
-    console.log(` Listening on port: ${PORT}`);
-    console.log(` Using Limits: System Prompt=${SYSTEM_PROMPT_LIMIT}, Prompt=${PROMPT_LIMIT}`);
-    console.log(` Fal AI Key Loaded: ${FAL_KEY ? 'Yes' : 'No'}`);
-    console.log(` API Key Auth Enabled: ${API_KEY ? 'Yes' : 'No'}`);
-    console.log(` Chat Completions Endpoint: POST http://localhost:${PORT}/v1/chat/completions`);
-    console.log(` Image Generations Endpoint: POST http://localhost:${PORT}/v1/images/generations`);
-    console.log(` Models Endpoint: GET http://localhost:${PORT}/v1/models`);
-    console.log(`===================================================`);
+    logger.info(`Server started successfully`, {
+        port: PORT,
+        environment: process.env.NODE_ENV || 'development',
+        falKeyConfigured: !!FAL_KEY,
+        apiKeyProtection: !!API_KEY
+    });
+    
+    logger.info(`API endpoints available`, {
+        models: `GET http://localhost:${PORT}/v1/models`,
+        chat: `POST http://localhost:${PORT}/v1/chat/completions`,
+        images: `POST http://localhost:${PORT}/v1/images/generations`
+    });
 });
 
-// 根路径响应 (更新信息)
+// 根路径响应
 app.get('/', (req, res) => {
     res.send('Fal OpenAI Proxy (System Top + Separator + Recency Strategy) is running.');
 });
