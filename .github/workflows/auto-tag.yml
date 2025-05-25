@@ -1,0 +1,61 @@
+name: Auto Tag Version
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - master
+
+jobs:
+  auto-tag:
+    # 只在PR被合并时运行，而不是在PR被关闭时运行
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Get latest tag
+        id: get_latest_tag
+        run: |
+          # 获取最新标签，如果没有则设置为 v0.1
+          git fetch --tags
+          latest_tag=$(git tag -l 'v*' | sort -V | tail -n 1)
+          if [ -z "$latest_tag" ]; then
+            latest_tag="v0.1"
+          fi
+          echo "LATEST_TAG=$latest_tag" >> $GITHUB_OUTPUT
+          
+      - name: Generate new version
+        id: generate_version
+        run: |
+          latest_tag="${{ steps.get_latest_tag.outputs.LATEST_TAG }}"
+          # 提取版本号并增加
+          current_version=${latest_tag#v}
+          # 将版本号加1
+          new_version=$(echo "$current_version + 0.1" | bc)
+          # 格式化为两位小数
+          new_tag="v$(printf "%.1f" $new_version)"
+          echo "NEW_TAG=$new_tag" >> $GITHUB_OUTPUT
+          
+      - name: Create and push tag
+        run: |
+          new_tag="${{ steps.generate_version.outputs.NEW_TAG }}"
+          # 获取PR标题作为tag信息
+          tag_message="${{ github.event.pull_request.title }}"
+          
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          # 创建带注释的标签
+          git tag -a "$new_tag" -m "$tag_message"
+          git push origin "$new_tag"
+          
+      - name: Output Tag
+        run: |
+          echo "Created and pushed new tag: ${{ steps.generate_version.outputs.NEW_TAG }}" 
