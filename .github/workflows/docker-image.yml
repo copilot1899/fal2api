@@ -49,13 +49,6 @@ jobs:
             DATE=$(date +'%Y%m%d')  
             echo "TAG=${DATE}-${SHORT_SHA}" >> $GITHUB_OUTPUT  
           fi  
-      - name: Extract metadata (tags, labels) for Docker
-        id: meta
-        uses: docker/metadata-action@v4
-        with:
-          images: |
-            bybing/fal2api
-            ghcr.io/${{ github.repository }}
 
       - name: Build and Push Multi-Arch Images  
         uses: docker/build-push-action@v5  
