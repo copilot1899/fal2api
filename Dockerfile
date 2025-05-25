@@ -20,6 +20,7 @@ COPY --from=builder /app/node_modules ./node_modules
 
 # 复制应用代码
 COPY server.js .
+COPY logger.js .
 COPY package.json .
 
 # 设置环境变量
