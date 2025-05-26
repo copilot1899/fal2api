@@ -1,0 +1,70 @@
+name: Build and Push Docker Image  
+
+on:
+  push:
+    # branches: [ "master" ]
+    tags: [ 'v*.*' ] 
+  pull_request:
+    branches: [ "master" ] 
+  workflow_dispatch:  
+  
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    environment: DOCKERHUB_TOKEN
+    permissions:
+      packages: write
+      contents: read
+      
+    steps:
+      - name: checkout the repo
+        uses: actions/checkout@v4
+      - name: Set up Docker Buildx  
+        uses: docker/setup-buildx-action@v3  
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+    
+      # 提取仓库名称作为镜像名  
+      - name: Extract repository name  
+        id: repo-name  
+        run: echo "REPO_NAME=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT  
+
+      # 提取 Git tag 作为版本号  
+      - name: Extract tag version  
+        id: tag-version  
+        if: startsWith(github.ref, 'refs/tags/v')  
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT  
+        
+      # 设置默认版本标签  
+      - name: Set default version  
+        id: version  
+        run: |  
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then  
+            echo "TAG=${{ steps.tag-version.outputs.VERSION }}" >> $GITHUB_OUTPUT  
+          else  
+            SHORT_SHA=$(echo ${GITHUB_SHA} | cut -c1-7)  
+            DATE=$(date +'%Y%m%d')  
+            echo "TAG=${DATE}-${SHORT_SHA}" >> $GITHUB_OUTPUT  
+          fi  
+
+      - name: Build and Push Multi-Arch Images  
+        uses: docker/build-push-action@v5  
+        with:  
+          context: .  
+          push: true  
+          tags: |  
+            ${{ steps.repo-name.outputs.REPO_NAME }}:latest  
+            ${{ steps.repo-name.outputs.REPO_NAME }}:${{ steps.version.outputs.TAG }}  
+      
+      # 输出镜像信息  
+      - name: Image digest  
+        run: |  
+          echo "Multi-arch image has been pushed to ghcr.io/${{ steps.repo-name.outputs.REPO_NAME }}:latest"  
+          echo "Multi-arch image has been pushed to ghcr.io/${{ steps.repo-name.outputs.REPO_NAME }}:${{ steps.version.outputs.TAG }}"  
+          echo "ARM64-only image has been pushed to ghcr.io/${{ steps.repo-name.outputs.REPO_NAME }}:arm-latest"  
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then  
+            echo "ARM64-only image has been pushed to ghcr.io/${{ steps.repo-name.outputs.REPO_NAME }}:arm-${{ steps.version.outputs.TAG }}"  
+          fi  
