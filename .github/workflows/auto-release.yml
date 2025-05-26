@@ -49,9 +49,9 @@ jobs:
         id: set_version
         run: |
           if [ "${{ github.event_name }}" == "push" ] && [ "${{ github.ref }}" == "refs/heads/master" ]; then
-            echo "FINAL_VERSION=${{ steps.create_tag.outputs.VERSION }}" >> $GITHUB_OUTPUT
-          else
             echo "FINAL_VERSION=${{ steps.get_version.outputs.VERSION }}" >> $GITHUB_OUTPUT
+          else
+            echo "FINAL_VERSION=${{  steps.create_tag.outputs.VERSION }}" >> $GITHUB_OUTPUT
           fi
           
       - name: Generate changelog
