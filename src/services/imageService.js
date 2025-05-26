@@ -92,7 +92,7 @@ export async function generateImage(model, prompt, numImages = 1, size = "1024x1
                 error: errorText,
                 elapsedTime: Date.now() - startTime
             });
-            throw new Error(`API request failed with status ${response.status}: ${errorText}`);
+            throw new Error(`API request failed with status ${Successfully.status}: ${errorText}`);
         }
         
         const responseData = await response.json();
@@ -213,26 +213,8 @@ export async function generateImage(model, prompt, numImages = 1, size = "1024x1
                     // 提取图片URL
                     if (resultData.images && resultData.images.length > 0) {
                         const imageUrls = resultData.images
-                            .filter(img => img && (img.url || (img.image && img.image.url) || typeof img === 'string' || (img.image && typeof img.image === 'string')))
-                            .map(img => {
-                                let url;
-                                if (typeof img === 'string') {
-                                    url = img;
-                                } else if (img.url) {
-                                    url = img.url;
-                                } else if (img.image && img.image.url) {
-                                    url = img.image.url;
-                                } else if (img.image && typeof img.image === 'string') {
-                                    url = img.image;
-                                }
-
-                                // 处理URL格式
-                                if (!url.startsWith('http') && !url.startsWith('data:')) {
-                                    url = `https://storage.googleapis.com/fal-ai/${url}`;
-                                }
-
-                                return { url };
-                            });
+                            .filter(img => img && img.url)
+                            .map(img => ({ url: img.url }));
                         
                         const duration = Date.now() - startTime;
                         logger.info(`Successfully generated ${imageUrls.length} images`, {
@@ -246,31 +228,18 @@ export async function generateImage(model, prompt, numImages = 1, size = "1024x1
                         });
                         
                         return imageUrls;
-                    } else if (resultData.image) {
-                        // 处理单个图片的情况
-                        let url;
-                        if (typeof resultData.image === 'string') {
-                            url = resultData.image;
-                        } else if (resultData.image.url) {
-                            url = resultData.image.url;
-                        }
-
-                        if (url) {
-                            if (!url.startsWith('http') && !url.startsWith('data:')) {
-                                url = `https://storage.googleapis.com/fal-ai/${url}`;
-                            }
-                            return [{ url }];
-                        }
+                    } else {
+                        logger.error(`No images found in the response`, {
+                            requestType: 'generateImage',
+                            model,
+                            requestId,
+                            response: JSON.stringify(resultData),
+                            elapsedTime: Date.now() - startTime
+                        });
+                        throw new Error("No images found in the response");
                     }
                     
-                    logger.error(`No images found in the response`, {
-                        requestType: 'generateImage',
-                        model,
-                        requestId,
-                        response: JSON.stringify(resultData),
-                        elapsedTime: Date.now() - startTime
-                    });
-                    throw new Error("No images found in the response");
+                    
                 } else if (status === "FAILED") {
                     logger.error(`Request failed`, {
                         requestType: 'generateImage',

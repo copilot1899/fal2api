@@ -41,22 +41,22 @@ export async function handleChatCompletion(req, res) {
             });
         }
 
-        // 构建新的请求体，强制 stream 为 false
+        // 构建新的请求体，保持原始的 stream 参数
         const imageReq = {
             ...req,
             body: { 
                 ...req.body, 
                 prompt,
-                stream: false
+                stream: stream // 使用原始的 stream 参数值
             }
         };
 
-        // 在修改 stream 参数后记录日志
+        // 记录日志
         logger.info(`Redirecting to image generation endpoint`, {
             requestType,
             ip,
             model,
-            stream: false,
+            stream, // 记录原始的 stream 值
             promptLength: prompt.length
         });
 
