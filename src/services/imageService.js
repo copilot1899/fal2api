@@ -23,6 +23,11 @@ const IMAGE_MODEL_URLS = {
     "flux-dev": {
         "submit_url": "https://queue.fal.run/fal-ai/flux/dev",
         "status_base_url": "https://queue.fal.run/fal-ai/flux"
+    },
+    "imagen3": {
+        "submit_url": "https://queue.fal.run/fal-ai/imagen3",
+        "status_base_url": "https://queue.fal.run/fal-ai/imagen3",
+        "supports_size": true
     }
 };
 
@@ -62,7 +67,7 @@ export async function generateImage(model, prompt, numImages = 1, size = "1024x1
             throw new Error(`Invalid size values: width=${width}, height=${height}. Both values must be positive numbers.`);
         }
 
-        if (model === "flux-1.1-ultra" || model === "ideogram-v2") {
+        if (model === "flux-1.1-ultra" || model === "ideogram-v2" || model === "imagen3") {
             const gcd = (a, b) => b ? gcd(b, a % b) : a;
             const divisor = gcd(width, height);
             requestBody.aspect_ratio = `${width / divisor}:${height / divisor}`;
@@ -75,7 +80,8 @@ export async function generateImage(model, prompt, numImages = 1, size = "1024x1
             model,
             width,
             height,
-            originalSize: size
+            originalSize: size,
+            requestBody: JSON.stringify(requestBody)
         });
     }
     
@@ -111,7 +117,7 @@ export async function generateImage(model, prompt, numImages = 1, size = "1024x1
                 error: errorText,
                 elapsedTime: Date.now() - startTime
             });
-            throw new Error(`API request failed with status ${Successfully.status}: ${errorText}`);
+            throw new Error(`API request failed with status ${response.status}: ${errorText}`);
         }
         
         const responseData = await response.json();

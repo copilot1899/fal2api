@@ -29,7 +29,8 @@ export const FAL_IMAGE_MODELS = [
     "recraft-v3",
     "flux-1.1-pro",
     "ideogram-v2",
-    "flux-dev"
+    "flux-dev",
+    "imagen3"
 ];
 
 // 图像生成模型的URL配置
@@ -53,5 +54,9 @@ export const IMAGE_MODEL_URLS = {
     "flux-dev": {
         "submit_url": "https://queue.fal.run/fal-ai/flux/dev",
         "status_base_url": "https://queue.fal.run/fal-ai/flux"
+    },
+    "imagen3": {
+        "submit_url": "https://queue.fal.run/fal-ai/imagen3",
+        "status_base_url": "https://queue.fal.run/fal-ai/imagen3"
     }
 }; 

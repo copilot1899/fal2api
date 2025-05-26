@@ -9,7 +9,8 @@ const IMAGE_GENERATION_CONFIG = {
         "recraft-v3",
         "flux-1.1-pro",
         "ideogram-v2",
-        "flux-dev"
+        "flux-dev",
+        "imagen3"
     ]
 };
 
