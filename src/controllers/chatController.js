@@ -2,9 +2,10 @@ import { fal } from '@fal-ai/client';
 import { logger } from '../utils/logger.js';
 import { isChatModel, convertMessagesToFalPrompt, handleStreamResponse, handleNonStreamResponse } from '../services/chatService.js';
 import { handleImageGeneration } from './imageController.js';
+import { FAL_IMAGE_MODELS } from '../config/constants.js';
 
 function isImageModel(model) {
-    return model.startsWith('flux-') || model === 'recraft-v3' || model === 'ideogram-v2';
+    return FAL_IMAGE_MODELS.includes(model);
 }
 
 export async function handleChatCompletion(req, res) {
