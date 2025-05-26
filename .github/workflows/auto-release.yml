@@ -1,15 +1,14 @@
 name: Auto Create Release
-
 on:
   push:
+    branches:
+      - master  # 添加 master 分支触发
     tags:
-      - 'v*.*.*'
+      - 'v*.*'  # 保留原有的标签触发
   workflow_dispatch:
-
 permissions:
   contents: write
   pull-requests: write
-
 jobs:
   create-release:
     runs-on: ubuntu-latest
@@ -18,11 +17,43 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Get version from tag
+          
+      # 仅当触发事件为 master 分支推送时，创建新标签
+      - name: Create new tag for master push
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        id: create_tag
+        run: |
+          # 生成基于日期的版本号
+          VERSION="v$(date +'%Y.%m.%d.%H%M')"
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          
+          # 配置 Git
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          # 创建并推送新标签
+          git tag $VERSION
+          git push origin $VERSION
+          
+          echo "Created and pushed new tag: $VERSION"
+          
+      # 从现有标签获取版本（适用于标签推送触发的情况）
+      - name: Get version from existing tag
+        if: github.event_name != 'push' || github.ref != 'refs/heads/master'
         id: get_version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-
+        run: |
+          echo "VERSION=$(git describe --tags)" >> $GITHUB_OUTPUT
+          
+      # 设置最终使用的版本号
+      - name: Set final version
+        id: set_version
+        run: |
+          if [ "${{ github.event_name }}" == "push" ] && [ "${{ github.ref }}" == "refs/heads/master" ]; then
+            echo "FINAL_VERSION=${{ steps.create_tag.outputs.VERSION }}" >> $GITHUB_OUTPUT
+          else
+            echo "FINAL_VERSION=${{ steps.get_version.outputs.VERSION }}" >> $GITHUB_OUTPUT
+          fi
+          
       - name: Generate changelog
         id: changelog
         uses: mikepenz/release-changelog-builder-action@v4
@@ -56,12 +87,13 @@ jobs:
             }
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
+          
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          name: Release ${{ steps.get_version.outputs.VERSION }}
+          tag_name: ${{ steps.set_version.outputs.FINAL_VERSION }}
+          name: Release ${{ steps.set_version.outputs.FINAL_VERSION }}
           body: ${{ steps.changelog.outputs.changelog }}
           draft: false
           prerelease: false
-          token: ${{ secrets.GITHUB_TOKEN }} 
+          token: ${{ secrets.GITHUB_TOKEN }}
