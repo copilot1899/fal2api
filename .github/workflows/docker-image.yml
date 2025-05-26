@@ -37,9 +37,58 @@ jobs:
         
       # 设置默认版本标签  
       - name: Set default version  
-        id: version  
+        id: default_version  
         run: |
-          echo "VERSION=$(git describe --tags)" >> $GITHUB_OUTPUT
+          # 获取最新的标签
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "VERSION=$LATEST_TAG" >> $GITHUB_OUTPUT
+          echo "Using latest tag as default version: $LATEST_TAG"
+
+      # 当推送到 master 时，检查是否需要创建新标签
+      - name: Create new tag for master push
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        id: create_tag
+        run: |
+          # 生成基于日期的版本号
+          NEW_TAG="v$(date +'%Y.%m.%d.%H%M')"
+          echo "VERSION=$NEW_TAG" >> $GITHUB_OUTPUT
+          
+          # 配置 Git
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          # 创建并推送新标签
+          git tag $NEW_TAG
+          git push origin $NEW_TAG
+          
+          echo "Created and pushed new tag: $NEW_TAG"
+          
+      # 如果是标签推送，使用当前标签
+      - name: Get version from tag push
+        if: startsWith(github.ref, 'refs/tags/')
+        id: tag_version
+        run: |
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+          echo "VERSION=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "Using pushed tag: $TAG_NAME"
+          
+      # 设置最终使用的版本号
+      - name: Set final version
+        id: set_version
+        run: |
+          if [ "${{ github.event_name }}" == "push" ] && [ "${{ github.ref }}" == "refs/heads/master" ]; then
+            # 使用为master创建的新标签
+            FINAL_VERSION="${{ steps.create_tag.outputs.VERSION }}"
+          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            # 使用被推送的标签
+            FINAL_VERSION="${{ steps.tag_version.outputs.VERSION }}"
+          else
+            # 对于手动触发等其他情况，使用最新现有标签
+            FINAL_VERSION="${{ steps.default_version.outputs.VERSION }}"
+          fi
+          
+          echo "FINAL_VERSION=$FINAL_VERSION" >> $GITHUB_OUTPUT
+          echo "Using final version: $FINAL_VERSION"
 
       - name: Build and Push Multi-Arch Images  
         uses: docker/build-push-action@v5  
@@ -48,7 +97,7 @@ jobs:
           push: true  
           tags: |  
             ${{ steps.repo-name.outputs.REPO_NAME }}:latest  
-            ${{ steps.repo-name.outputs.REPO_NAME }}:${{ steps.version.outputs.VERSION }}  
+            ${{ steps.repo-name.outputs.REPO_NAME }}:${{ steps.set_version.outputs.FINAL_VERSION }}  
       
       # 输出镜像信息  
       - name: Image digest  
