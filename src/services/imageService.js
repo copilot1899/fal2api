@@ -50,7 +50,18 @@ export async function generateImage(model, prompt, numImages = 1, size = "1024x1
     
     // 处理图像尺寸
     if (size) {
-        const [width, height] = size.split("x").map(Number);
+        const parts = size.split("x");
+        if (parts.length !== 2) {
+            throw new Error(`Invalid size format: ${size}. Expected format: widthxheight (e.g. 1024x1024)`);
+        }
+        
+        const width = Number(parts[0]);
+        const height = Number(parts[1]);
+        
+        if (isNaN(width) || isNaN(height) || width <= 0 || height <= 0) {
+            throw new Error(`Invalid size values: width=${width}, height=${height}. Both values must be positive numbers.`);
+        }
+
         if (model === "flux-1.1-ultra" || model === "ideogram-v2") {
             const gcd = (a, b) => b ? gcd(b, a % b) : a;
             const divisor = gcd(width, height);
@@ -58,6 +69,14 @@ export async function generateImage(model, prompt, numImages = 1, size = "1024x1
         } else {
             requestBody.image_size = { width, height };
         }
+        
+        logger.debug(`Size parameters processed`, {
+            requestType: 'generateImage',
+            model,
+            width,
+            height,
+            originalSize: size
+        });
     }
     
     logger.debug(`Request body prepared`, {
