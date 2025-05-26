@@ -3,7 +3,7 @@ name: Auto Create Release
 on:
   push:
     tags:
-      - 'v*.*.*'
+      - 'v*.*'
   workflow_dispatch:
 
 permissions:
@@ -21,7 +21,8 @@ jobs:
 
       - name: Get version from tag
         id: get_version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        run: |
+          echo "VERSION=$(git describe --tags)" >> $GITHUB_OUTPUT
 
       - name: Generate changelog
         id: changelog
@@ -60,6 +61,7 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
+          tag_name: ${{ steps.get_version.outputs.VERSION }}
           name: Release ${{ steps.get_version.outputs.VERSION }}
           body: ${{ steps.changelog.outputs.changelog }}
           draft: false
