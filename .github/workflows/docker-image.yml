@@ -43,7 +43,7 @@ jobs:
         id: version  
         run: |
           git describe --tags > VERSION 
-
+          
       - name: Build and Push Multi-Arch Images  
         uses: docker/build-push-action@v5  
         with:  
