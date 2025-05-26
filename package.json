@@ -2,15 +2,27 @@
   "name": "fal2api",
   "version": "1.0.0",
   "description": "FAL.ai API proxy server",
-  "main": "server.js",
+  "main": "src/app.js",
   "type": "module",
   "scripts": {
-    "start": "node server.js"
+    "start": "node src/app.js",
+    "dev": "nodemon src/app.js",
+    "lint": "eslint src/**/*.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
     "@fal-ai/client": "^1.4.0",
+    "compression": "^1.7.4",
     "dotenv": "^16.5.0",
     "express": "^4.18.2",
-    "node-fetch": "^3.3.2"
+    "express-rate-limit": "^7.1.5",
+    "helmet": "^7.1.0",
+    "node-cache": "^5.1.2",
+    "node-fetch": "^3.3.2",
+    "response-time": "^2.3.2"
+  },
+  "devDependencies": {
+    "eslint": "^8.56.0",
+    "nodemon": "^3.0.3"
   }
 }
