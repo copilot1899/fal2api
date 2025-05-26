@@ -19,6 +19,8 @@ jobs:
     steps:
       - name: checkout the repo
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Set up Docker Buildx  
         uses: docker/setup-buildx-action@v3  
       - name: Log in to Docker Hub
@@ -41,8 +43,14 @@ jobs:
       # 设置默认版本标签  
       - name: Set default version  
         id: version  
-        run: |
-          git describe --tags > VERSION 
+        run: |  
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then  
+            echo "TAG=${{ steps.tag-version.outputs.VERSION }}" >> $GITHUB_OUTPUT  
+          else  
+            SHORT_SHA=$(echo ${GITHUB_SHA} | cut -c1-7)  
+            DATE=$(date +'%Y%m%d')  
+            echo "TAG=${DATE}-${SHORT_SHA}" >> $GITHUB_OUTPUT  
+          fi  
 
       - name: Build and Push Multi-Arch Images  
         uses: docker/build-push-action@v5  
