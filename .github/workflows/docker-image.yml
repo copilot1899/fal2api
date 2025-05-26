@@ -39,6 +39,7 @@ jobs:
       - name: Set default version  
         id: version  
         run: |
+          git checkout master
           echo "VERSION=$(git describe --tags)" >> $GITHUB_OUTPUT
 
       - name: Build and Push Multi-Arch Images  
