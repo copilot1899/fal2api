@@ -53,7 +53,7 @@ jobs:
           push: true  
           tags: |  
             ${{ steps.repo-name.outputs.REPO_NAME }}:latest  
-            ${{ steps.repo-name.outputs.REPO_NAME }}:${{ steps.version.outputs.TAG }}  
+            ${{ steps.repo-name.outputs.REPO_NAME }}:${{ steps.version.outputs.VERSION }}  
       
       # 输出镜像信息  
       - name: Image digest  
