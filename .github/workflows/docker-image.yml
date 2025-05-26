@@ -41,14 +41,8 @@ jobs:
       # 设置默认版本标签  
       - name: Set default version  
         id: version  
-        run: |  
-          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then  
-            echo "TAG=${{ steps.tag-version.outputs.VERSION }}" >> $GITHUB_OUTPUT  
-          else  
-            SHORT_SHA=$(echo ${GITHUB_SHA} | cut -c1-7)  
-            DATE=$(date +'%Y%m%d')  
-            echo "TAG=${DATE}-${SHORT_SHA}" >> $GITHUB_OUTPUT  
-          fi  
+        run: |
+          git describe --tags > VERSION 
 
       - name: Build and Push Multi-Arch Images  
         uses: docker/build-push-action@v5  
