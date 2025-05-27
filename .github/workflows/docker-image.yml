@@ -103,9 +103,9 @@ jobs:
       - name: Set final version
         id: set_version
         run: |
-          if [ "${{ github.event_name }}" == "push" ] && [ "${{ github.ref }}" == "refs/heads/master" ]; then
+          if [ "${{ needs.auto-tag.result }}" == "success" ] || [[ "${{ github.ref }}" == refs/heads/master ]]; then
             # 使用自动创建的新标签
-            FINAL_VERSION="${{ needs.auto-tag.outputs.NEW_TAG }}"
+            FINAL_VERSION="${{ needs.auto-tag.result.outputs.NEW_TAG }}"
           else [[ "${{ github.ref }}" == refs/tags/* ]]; then
             # 使用被推送的标签
             FINAL_VERSION="${{ steps.tag_version.outputs.VERSION }}"
