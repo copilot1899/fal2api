@@ -9,62 +9,7 @@ on:
   workflow_dispatch:  
   
 jobs:
-  # 自动生成tag
-  auto-tag:
-    # 只在PR被合并时运行，而不是在PR被关闭时运行
-    if: github.event.pull_request.merged == true
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      
-      - name: Get latest tag
-        id: get_latest_tag
-        run: |
-          # 获取最新标签，如果没有则设置为 v0.1
-          git fetch --tags
-          latest_tag=$(git tag -l 'v*' | sort -V | tail -n 1)
-          if [ -z "$latest_tag" ]; then
-            latest_tag="v0.1"
-          fi
-          echo "LATEST_TAG=$latest_tag" >> $GITHUB_OUTPUT
-          
-      - name: Generate new version
-        id: generate_version
-        run: |
-          latest_tag="${{ steps.get_latest_tag.outputs.LATEST_TAG }}"
-          # 提取版本号并增加
-          current_version=${latest_tag#v}
-          # 将版本号加1
-          new_version=$(echo "$current_version + 0.1" | bc)
-          # 格式化为两位小数
-          new_tag="v$(printf "%.1f" $new_version)"
-          echo "NEW_TAG=$new_tag" >> $GITHUB_OUTPUT
-          
-      - name: Create and push tag
-        run: |
-          new_tag="${{ steps.generate_version.outputs.NEW_TAG }}"
-          # 获取PR标题作为tag信息
-          tag_message="${{ github.event.pull_request.title }}"
-          
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          
-          # 创建带注释的标签
-          git tag -a "$new_tag" -m "$tag_message"
-          git push origin "$new_tag"
-          
-      - name: Output Tag
-        run: |
-          echo "Created and pushed new tag: ${{ steps.generate_version.outputs.NEW_TAG }}" 
-  
   build-and-push:
-    needs: auto-tag
     runs-on: ubuntu-latest
     environment: DOCKERHUB_TOKEN
     permissions:
@@ -89,29 +34,13 @@ jobs:
         id: repo-name  
         run: echo "REPO_NAME=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT  
  
-          
-      # 如果是标签推送，使用当前标签
-      - name: Get version from tag push
-        if: startsWith(github.ref, 'refs/tags/')
-        id: tag_version
+        
+      # 设置默认版本标签  
+      - name: Set default version  
+        id: version  
         run: |
-          TAG_NAME=${GITHUB_REF#refs/tags/}
-          echo "VERSION=$TAG_NAME" >> $GITHUB_OUTPUT
-          echo "Using pushed tag: $TAG_NAME"
-          
-      # 设置最终使用的版本号
-      - name: Set final version
-        id: set_version
-        run: |
-          if [ "${{ needs.auto-tag.result }}" == "success" ] || [[ "${{ github.ref }}" == refs/heads/master ]]; then
-            # 使用自动创建的新标签
-            FINAL_VERSION="${{ needs.auto-tag.result.outputs.NEW_TAG }}"
-          else [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            # 使用被推送的标签
-            FINAL_VERSION="${{ steps.tag_version.outputs.VERSION }}"
-          fi
-          echo "FINAL_VERSION=$FINAL_VERSION" >> $GITHUB_OUTPUT
-          echo "Using final version: $FINAL_VERSION"
+          git checkout master
+          echo "VERSION=$(git describe --tags)" >> $GITHUB_OUTPUT
 
       - name: Build and Push Multi-Arch Images  
         uses: docker/build-push-action@v5  
@@ -120,14 +49,14 @@ jobs:
           push: true  
           tags: |  
             ${{ steps.repo-name.outputs.REPO_NAME }}:latest  
-            ${{ steps.repo-name.outputs.REPO_NAME }}:${{ steps.set_version.outputs.FINAL_VERSION }}  
+            ${{ steps.repo-name.outputs.REPO_NAME }}:${{ steps.version.outputs.VERSION }}  
       
       # 输出镜像信息  
       - name: Image digest  
         run: |  
           echo "Multi-arch image has been pushed to ghcr.io/${{ steps.repo-name.outputs.REPO_NAME }}:latest"  
-          echo "Multi-arch image has been pushed to ghcr.io/${{ steps.repo-name.outputs.REPO_NAME }}:${{ steps.set_version.outputs.FINAL_VERSION }}"  
+          echo "Multi-arch image has been pushed to ghcr.io/${{ steps.repo-name.outputs.REPO_NAME }}:${{ steps.version.outputs.TAG }}"  
           echo "ARM64-only image has been pushed to ghcr.io/${{ steps.repo-name.outputs.REPO_NAME }}:arm-latest"  
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then  
-            echo "ARM64-only image has been pushed to ghcr.io/${{ steps.repo-name.outputs.REPO_NAME }}:arm-${{ steps.set_version.outputs.FINAL_VERSION }}"  
+            echo "ARM64-only image has been pushed to ghcr.io/${{ steps.repo-name.outputs.REPO_NAME }}:arm-${{ steps.version.outputs.TAG }}"  
           fi  
