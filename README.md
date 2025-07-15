@@ -11,6 +11,32 @@
   - ideogram-v2
   - flux-dev
 
+- 🤖 支持多种聊天模型：
+  - **Anthropic Claude 系列**：
+    - anthropic/claude-sonnet-4 ✨ (新增)
+    - anthropic/claude-opus-4 ✨ (新增)
+    - anthropic/claude-3.7-sonnet
+    - anthropic/claude-3.5-sonnet
+    - anthropic/claude-3-5-haiku
+    - anthropic/claude-3-haiku
+  - **Google Gemini 系列**：
+    - google/gemini-pro-1.5
+    - google/gemini-flash-1.5
+    - google/gemini-flash-1.5-8b
+    - google/gemini-2.0-flash-001
+  - **Meta Llama 系列**：
+    - meta-llama/llama-3.2-1b-instruct
+    - meta-llama/llama-3.2-3b-instruct
+    - meta-llama/llama-3.1-8b-instruct
+    - meta-llama/llama-3.1-70b-instruct
+    - meta-llama/llama-4-maverick
+    - meta-llama/llama-4-scout
+  - **OpenAI GPT 系列**：
+    - openai/gpt-4o-mini
+    - openai/gpt-4o
+  - **DeepSeek 系列**：
+    - deepseek/deepseek-r1
+
 - 💬 流式响应支持
   - 支持 SSE (Server-Sent Events)
   - 实时返回生成结果
@@ -154,17 +180,35 @@ POST /v1/images/generations
 POST /v1/chat/completions
 ```
 
-请求体示例：
+请求体示例（使用新支持的Claude Sonnet 4模型）：
 ```json
 {
-  "model": "recraft-v3",
+  "model": "anthropic/claude-sonnet-4",
   "messages": [
     {
+      "role": "system",
+      "content": "你是一个有用的AI助手。"
+    },
+    {
       "role": "user",
-      "content": "画一只猫"
+      "content": "请解释一下量子计算的基本原理。"
     }
   ],
   "stream": true
+}
+```
+
+请求体示例（使用Claude Opus 4模型）：
+```json
+{
+  "model": "anthropic/claude-opus-4",
+  "messages": [
+    {
+      "role": "user",
+      "content": "写一首关于春天的诗。"
+    }
+  ],
+  "stream": false
 }
 ```
 

@@ -4,6 +4,8 @@ export const SYSTEM_PROMPT_LIMIT = 4800;
 
 // FAL支持的模型列表
 export const FAL_SUPPORTED_MODELS = [
+    "anthropic/claude-sonnet-4",
+    "anthropic/claude-opus-4",
     "anthropic/claude-3.7-sonnet",
     "anthropic/claude-3.5-sonnet",
     "anthropic/claude-3-5-haiku",
