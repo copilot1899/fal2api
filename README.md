@@ -20,10 +20,13 @@
     - anthropic/claude-3-5-haiku
     - anthropic/claude-3-haiku
   - **Google Gemini 系列**：
+    - google/gemini-2.5-pro ✨ (新增)
     - google/gemini-pro-1.5
     - google/gemini-flash-1.5
     - google/gemini-flash-1.5-8b
     - google/gemini-2.0-flash-001
+  - **Moonshot AI 系列**：
+    - moonshotai/kimi-k2 ✨ (新增)
   - **Meta Llama 系列**：
     - meta-llama/llama-3.2-1b-instruct
     - meta-llama/llama-3.2-3b-instruct
